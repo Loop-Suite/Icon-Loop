@@ -1,0 +1,24 @@
+[package]
+name = "icon-loop"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Loop-Suite/icon-loop"
+description = "App icon design CLI — independent lens generation, deterministic render/policy gates, fully independent blind discourse, Borda-count verdict"
+
+[[bin]]
+name = "iconloop"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+ureq = { version = "2", features = ["json"] }
+regex = "1"
+resvg = "0.47"
+usvg = "0.47"
+tiny-skia = "0.12"

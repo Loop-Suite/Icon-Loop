@@ -1,0 +1,41 @@
+name = "example-mystic-app-icon"
+context = """
+A fictional example brief: an icon for a fortune-telling/divination app answered
+jointly by 5 analytical perspectives (e.g., five different divination/intuition systems).
+This is not a real product — it's an example spec meant to demonstrate how to use icon-loop.
+Replace this file with your own brief to use it.
+"""
+
+canvas = 1024
+margin_ratio = 0.10          # the shape must be fully contained within a 10% inset from each edge of the canvas
+render_sizes = [1024, 180, 60, 29]
+legibility_size = 29         # small-size legibility is judged using a render at this size
+min_fg_ratio = 0.03          # lower bound for foreground pixel ratio (too sparse = disappears)
+max_fg_ratio = 0.85          # upper bound for foreground pixel ratio (too dense = smudged)
+background_hex = "#000000"
+
+# Example palette — replace with your own brand tokens for actual use
+palette = ["#000000", "#1F2D3D", "#2E4A6B", "#4C7EB0", "#7FB3E0"]
+
+n_critics = 3                # number of independent blind critics in the discourse stage
+# The 3 critics are actually mixed across claude/openrouter (different labs, different models) —
+# if all use the same backend, it stops being an "independent panel" and becomes "the same model
+# called 3 times", breaking discourse's core premise (per research notes).
+# If OPENROUTER_API_KEY is missing, main.rs automatically falls back the openrouter critic to claude and prints a warning.
+critic_backends = ["claude", "openrouter", "claude"]
+openrouter_critic_model = "x-ai/grok-4.5"
+
+[[personas]]
+id = "glyph"
+persona_name = "Ancient Glyph Carver"
+philosophy = "Reinterprets the visual vocabulary shared by divination and mysticism (e.g., stacked bars, constellation lines) geometrically, rather than copying it literally."
+
+[[personas]]
+id = "negspace"
+persona_name = "Negative Space Minimalist"
+philosophy = "Suggests divination/insight with a single negative-space cutout (a hole punched in the background color) within one thick, safe silhouette. Does not scatter multiple fragments."
+
+[[personas]]
+id = "crystal"
+persona_name = "Crystal Sculptor"
+philosophy = "Instead of radiating fragments, uses a compact, closed polyhedron (crystal/gem) silhouette — facets do not extend beyond the outline."
