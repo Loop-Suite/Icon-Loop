@@ -47,8 +47,8 @@ impl Llm {
     }
 
     pub fn openrouter(model: Option<String>, retries: u32, verbose: bool) -> Result<Self> {
-        let api_key =
-            std::env::var("OPENROUTER_API_KEY").context("OPENROUTER_API_KEY environment variable not set")?;
+        let api_key = std::env::var("OPENROUTER_API_KEY")
+            .context("OPENROUTER_API_KEY environment variable not set")?;
         Ok(Self {
             provider_label: "openrouter",
             provider: Provider::OpenRouter { api_key },
@@ -60,7 +60,9 @@ impl Llm {
 
     fn call_once(&self, prompt: &str, system: Option<&str>, images: &[PathBuf]) -> Result<String> {
         match &self.provider {
-            Provider::ClaudeCli { bin } => call_claude(bin, self.model.as_deref(), prompt, system, images),
+            Provider::ClaudeCli { bin } => {
+                call_claude(bin, self.model.as_deref(), prompt, system, images)
+            }
             Provider::OpenRouter { api_key } => {
                 call_openrouter(api_key, self.model.as_deref(), prompt, system, images)
             }
@@ -71,7 +73,12 @@ impl Llm {
         self.text_with_images(prompt, system, &[])
     }
 
-    pub fn text_with_images(&self, prompt: &str, system: Option<&str>, images: &[PathBuf]) -> Result<String> {
+    pub fn text_with_images(
+        &self,
+        prompt: &str,
+        system: Option<&str>,
+        images: &[PathBuf],
+    ) -> Result<String> {
         let mut last = None;
         for attempt in 0..=self.retries {
             match self.call_once(prompt, system, images) {
@@ -85,7 +92,11 @@ impl Llm {
                         eprintln!("[retry {}/{}] {error}", attempt + 1, self.retries);
                     }
                     None => {
-                        eprintln!("[retry {}/{}] unknown retry error", attempt + 1, self.retries);
+                        eprintln!(
+                            "[retry {}/{}] unknown retry error",
+                            attempt + 1,
+                            self.retries
+                        );
                     }
                 }
             }
@@ -105,8 +116,9 @@ impl Llm {
                 .call_once(prompt, system, images)
                 .and_then(|raw| extract_json(&raw))
                 .and_then(|value| {
-                    serde_json::from_value(value)
-                        .with_context(|| format!("JSON schema mismatch: {}", std::any::type_name::<T>()))
+                    serde_json::from_value(value).with_context(|| {
+                        format!("JSON schema mismatch: {}", std::any::type_name::<T>())
+                    })
                 }) {
                 Ok(value) => return Ok(value),
                 Err(error) => last = Some(error),
@@ -117,7 +129,11 @@ impl Llm {
                         eprintln!("[json retry {}/{}] {error}", attempt + 1, self.retries);
                     }
                     None => {
-                        eprintln!("[json retry {}/{}] unknown json retry error", attempt + 1, self.retries);
+                        eprintln!(
+                            "[json retry {}/{}] unknown json retry error",
+                            attempt + 1,
+                            self.retries
+                        );
                     }
                 }
             }
@@ -146,9 +162,12 @@ fn call_claude(
         command.arg("--tools").arg("");
     } else {
         // discourse critic calls need to see the rendered PNG — grant only minimal Read tool access.
-        let dir = images[0]
-            .parent()
-            .ok_or_else(|| anyhow!("image path has no parent directory: {}", images[0].display()))?;
+        let dir = images[0].parent().ok_or_else(|| {
+            anyhow!(
+                "image path has no parent directory: {}",
+                images[0].display()
+            )
+        })?;
         command
             .arg("--tools")
             .arg("Read")
@@ -188,8 +207,12 @@ fn call_claude(
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let envelope: serde_json::Value = serde_json::from_str(stdout.trim())
-        .with_context(|| format!("failed to parse claude JSON output: {}", truncate(&stdout, 400)))?;
+    let envelope: serde_json::Value = serde_json::from_str(stdout.trim()).with_context(|| {
+        format!(
+            "failed to parse claude JSON output: {}",
+            truncate(&stdout, 400)
+        )
+    })?;
     if envelope
         .get("is_error")
         .and_then(|value| value.as_bool())
@@ -263,11 +286,16 @@ fn call_openrouter(
         Ok(response) => response,
         Err(ureq::Error::Status(code, response)) => {
             let body = response.into_string().unwrap_or_default();
-            return Err(anyhow!("OpenRouter response code {code}: {}", truncate(&body, 400)));
+            return Err(anyhow!(
+                "OpenRouter response code {code}: {}",
+                truncate(&body, 400)
+            ));
         }
         Err(error) => return Err(anyhow!("OpenRouter call failed: {error}")),
     };
-    let value: serde_json::Value = response.into_json().context("failed to parse OpenRouter response JSON")?;
+    let value: serde_json::Value = response
+        .into_json()
+        .context("failed to parse OpenRouter response JSON")?;
     value
         .get("choices")
         .and_then(|choices| choices.get(0))
@@ -275,7 +303,12 @@ fn call_openrouter(
         .and_then(|message| message.get("content"))
         .and_then(|content| content.as_str())
         .map(ToString::to_string)
-        .ok_or_else(|| anyhow!("OpenRouter response has no content: {}", truncate(&value.to_string(), 400)))
+        .ok_or_else(|| {
+            anyhow!(
+                "OpenRouter response has no content: {}",
+                truncate(&value.to_string(), 400)
+            )
+        })
 }
 
 pub fn extract_json(raw: &str) -> Result<serde_json::Value> {
@@ -306,7 +339,10 @@ pub fn extract_json(raw: &str) -> Result<serde_json::Value> {
             }
         }
     }
-    Err(anyhow!("failed to extract JSON: {}", truncate(trimmed, 400)))
+    Err(anyhow!(
+        "failed to extract JSON: {}",
+        truncate(trimmed, 400)
+    ))
 }
 
 pub fn truncate(value: &str, limit: usize) -> String {

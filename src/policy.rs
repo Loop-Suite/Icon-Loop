@@ -68,11 +68,8 @@ fn check_containment(spec: &Spec, native_render: &Rendered) -> PolicyCheck {
 
 fn check_palette(spec: &Spec, svg_source: &str) -> Result<PolicyCheck> {
     let re = Regex::new(r#"fill="(#[0-9a-fA-F]{6})""#).context("regex compilation failed")?;
-    let allowed: std::collections::HashSet<String> = spec
-        .palette
-        .iter()
-        .map(|h| h.to_lowercase())
-        .collect();
+    let allowed: std::collections::HashSet<String> =
+        spec.palette.iter().map(|h| h.to_lowercase()).collect();
 
     let mut used = std::collections::HashSet::new();
     let mut stray = Vec::new();
@@ -86,9 +83,17 @@ fn check_palette(spec: &Spec, svg_source: &str) -> Result<PolicyCheck> {
 
     Ok(PolicyCheck {
         id: "palette".to_string(),
-        status: if stray.is_empty() { PolicyStatus::Pass } else { PolicyStatus::Fail },
+        status: if stray.is_empty() {
+            PolicyStatus::Pass
+        } else {
+            PolicyStatus::Fail
+        },
         evidence: if stray.is_empty() {
-            format!("All {} used colors are within the palette: {:?}", used.len(), used)
+            format!(
+                "All {} used colors are within the palette: {:?}",
+                used.len(),
+                used
+            )
         } else {
             format!("Colors used outside the palette: {:?}", stray)
         },
@@ -109,7 +114,11 @@ fn check_legibility(spec: &Spec, legibility_render: &Rendered) -> PolicyCheck {
 
     PolicyCheck {
         id: "legibility".to_string(),
-        status: if ok { PolicyStatus::Pass } else { PolicyStatus::Fail },
+        status: if ok {
+            PolicyStatus::Pass
+        } else {
+            PolicyStatus::Fail
+        },
         evidence: format!(
             "{}px foreground ratio {:.1}% (allowed {:.0}%~{:.0}%)",
             legibility_render.size,
@@ -133,7 +142,12 @@ pub fn evaluate(
     let legibility = renders
         .iter()
         .find(|r| r.size == spec.legibility_size)
-        .ok_or_else(|| anyhow::anyhow!("No render found for small legibility size ({})", spec.legibility_size))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No render found for small legibility size ({})",
+                spec.legibility_size
+            )
+        })?;
 
     let containment = check_containment(spec, native);
     let palette = check_palette(spec, svg_source)?;

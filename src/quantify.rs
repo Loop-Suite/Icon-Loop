@@ -51,7 +51,11 @@ fn diversity_note(rounds: &[CritiqueRound]) -> String {
     } else {
         let mut list: Vec<&str> = providers.into_iter().collect();
         list.sort();
-        format!("Judging panel mixes {} providers: {}", list.len(), list.join(", "))
+        format!(
+            "Judging panel mixes {} providers: {}",
+            list.len(),
+            list.join(", ")
+        )
     }
 }
 

@@ -113,7 +113,11 @@ fn build_openrouter_critic_llm(cli: &Cli, spec: &Spec) -> Option<Llm> {
     if !spec.critic_backends.iter().any(|b| b == "openrouter") {
         return None;
     }
-    match Llm::openrouter(Some(spec.openrouter_critic_model.clone()), cli.retries, cli.verbose) {
+    match Llm::openrouter(
+        Some(spec.openrouter_critic_model.clone()),
+        cli.retries,
+        cli.verbose,
+    ) {
         Ok(llm) => Some(llm),
         Err(error) => {
             eprintln!(
@@ -131,7 +135,8 @@ fn real_main() -> Result<()> {
         Command::Design(args) => {
             let lens_llm = build_llm(&cli)?;
             let spec = Spec::load(&args.spec)?;
-            let claude_llm = Llm::claude_cli(cli.claude_bin.clone(), None, cli.retries, cli.verbose);
+            let claude_llm =
+                Llm::claude_cli(cli.claude_bin.clone(), None, cli.retries, cli.verbose);
             let openrouter_llm = build_openrouter_critic_llm(&cli, &spec);
             prepare_out(&args.out)?;
             run_pipeline(
@@ -148,7 +153,8 @@ fn real_main() -> Result<()> {
         Command::Refine(args) => {
             let lens_llm = build_llm(&cli)?;
             let spec = Spec::load(&args.spec)?;
-            let claude_llm = Llm::claude_cli(cli.claude_bin.clone(), None, cli.retries, cli.verbose);
+            let claude_llm =
+                Llm::claude_cli(cli.claude_bin.clone(), None, cli.retries, cli.verbose);
             let openrouter_llm = build_openrouter_critic_llm(&cli, &spec);
             let prior = state::load(&args.prior)?;
             prepare_out(&args.out)?;
@@ -168,7 +174,12 @@ fn real_main() -> Result<()> {
             let state = state::load(run)?;
             let render_dir = run.join("render");
             for candidate in &state.candidates {
-                let renders = render::render_all(&candidate.svg, &spec.render_sizes, &render_dir, &candidate.id)?;
+                let renders = render::render_all(
+                    &candidate.svg,
+                    &spec.render_sizes,
+                    &render_dir,
+                    &candidate.id,
+                )?;
                 let report = policy::evaluate(&spec, &candidate.id, &candidate.svg, &renders)?;
                 println!(
                     "{}: {}",
@@ -176,7 +187,12 @@ fn real_main() -> Result<()> {
                     if report.overall_pass { "PASS" } else { "FAIL" }
                 );
                 for check in &report.checks {
-                    println!("  [{}] {}: {}", check.status.label(), check.id, check.evidence);
+                    println!(
+                        "  [{}] {}: {}",
+                        check.status.label(),
+                        check.id,
+                        check.evidence
+                    );
                 }
             }
             Ok(())
@@ -191,7 +207,8 @@ fn prepare_out(path: &Path) -> Result<()> {
             path.display()
         );
     }
-    std::fs::create_dir_all(path).with_context(|| format!("Failed to create output directory: {}", path.display()))
+    std::fs::create_dir_all(path)
+        .with_context(|| format!("Failed to create output directory: {}", path.display()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -249,10 +266,19 @@ fn run_pipeline_refine(
                             .items
                             .iter()
                             .find(|item| item.candidate_id == candidate.id)
-                            .map(|item| format!("{} (first impression: {})", item.biggest_flaw, item.blind_read))
+                            .map(|item| {
+                                format!(
+                                    "{} (first impression: {})",
+                                    item.biggest_flaw, item.blind_read
+                                )
+                            })
                     })
                     .collect();
-                (candidate.id.clone(), candidate.svg.clone(), flaws.join(" / "))
+                (
+                    candidate.id.clone(),
+                    candidate.svg.clone(),
+                    flaws.join(" / "),
+                )
             })
             .collect()
     };
@@ -299,7 +325,9 @@ fn run_pipeline_inner(
 
     let dead_concepts_ref = dead_concepts.as_str();
     let candidates = par_map(concurrency, items, |(persona, prior)| {
-        let prior_ref = prior.as_ref().map(|(svg, crit)| (svg.as_str(), crit.as_str()));
+        let prior_ref = prior
+            .as_ref()
+            .map(|(svg, crit)| (svg.as_str(), crit.as_str()));
         let candidate = lens::run(lens_llm, spec, &persona, dead_concepts_ref, prior_ref)?;
         println!("  lens done: {} ({})", persona.persona_name, persona.id);
         Ok(candidate)
@@ -310,7 +338,12 @@ fn run_pipeline_inner(
     let render_dir = out.join("render");
     let mut policies = Vec::new();
     for candidate in &candidates {
-        let renders = render::render_all(&candidate.svg, &spec.render_sizes, &render_dir, &candidate.id)?;
+        let renders = render::render_all(
+            &candidate.svg,
+            &spec.render_sizes,
+            &render_dir,
+            &candidate.id,
+        )?;
         let report = policy::evaluate(spec, &candidate.id, &candidate.svg, &renders)?;
         println!(
             "  policy {}: {}",
@@ -329,8 +362,9 @@ fn run_pipeline_inner(
         for &size in &spec.render_sizes {
             let src = render_dir.join(format!("{}_{}.png", candidate.id, size));
             let dst = blind_dir.join(format!("{blind_id}_{size}.png"));
-            std::fs::copy(&src, &dst)
-                .with_context(|| format!("Blind copy failed: {} -> {}", src.display(), dst.display()))?;
+            std::fs::copy(&src, &dst).with_context(|| {
+                format!("Blind copy failed: {} -> {}", src.display(), dst.display())
+            })?;
         }
         blind_map.push((blind_id, candidate.id.clone()));
     }
@@ -386,7 +420,13 @@ fn run_pipeline_inner(
         println!("  minority opinion: {note}");
     }
 
-    let new_dead_concepts = accumulate_dead_concepts(&dead_concepts, round, &candidates, &discourse_rounds, &quant);
+    let new_dead_concepts = accumulate_dead_concepts(
+        &dead_concepts,
+        round,
+        &candidates,
+        &discourse_rounds,
+        &quant,
+    );
 
     let state = state::State {
         round,
@@ -398,9 +438,19 @@ fn run_pipeline_inner(
         quant: quant.clone(),
     };
     state::write(out, &state)?;
-    let report_path = report::write(out, round, &candidates, &policies, &discourse_rounds, &quant)?;
+    let report_path = report::write(
+        out,
+        round,
+        &candidates,
+        &policies,
+        &discourse_rounds,
+        &quant,
+    )?;
     println!("Report: {}", report_path.display());
-    println!("Next round: iconloop refine --spec <spec.toml> --prior {} --out <new-out>", out.display());
+    println!(
+        "Next round: iconloop refine --spec <spec.toml> --prior {} --out <new-out>",
+        out.display()
+    );
     Ok(())
 }
 
@@ -429,7 +479,11 @@ fn accumulate_dead_concepts(
             ));
             let mut flaw_lines: Vec<String> = Vec::new();
             for round_result in discourse {
-                if let Some(item) = round_result.items.iter().find(|i| &i.candidate_id == last_id) {
+                if let Some(item) = round_result
+                    .items
+                    .iter()
+                    .find(|i| &i.candidate_id == last_id)
+                {
                     if item.biggest_flaw.trim() != "none" && !item.biggest_flaw.trim().is_empty() {
                         flaw_lines.push(format!(
                             "- [{}] {} (first impression: {})",
@@ -491,7 +545,12 @@ where
                 .collect::<Vec<_>>();
             handles
                 .into_iter()
-                .map(|handle| handle.join().map_err(|_| anyhow!("worker thread panicked")).and_then(|inner| inner))
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| anyhow!("worker thread panicked"))
+                        .and_then(|inner| inner)
+                })
                 .collect::<Vec<Result<R>>>()
         });
         for result in results {

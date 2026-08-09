@@ -10,17 +10,26 @@ pub struct Rendered {
     pub pixmap: Pixmap,
 }
 
-pub fn render_all(svg: &str, sizes: &[u32], out_dir: &Path, candidate_id: &str) -> Result<Vec<Rendered>> {
+pub fn render_all(
+    svg: &str,
+    sizes: &[u32],
+    out_dir: &Path,
+    candidate_id: &str,
+) -> Result<Vec<Rendered>> {
     let opt = usvg::Options::default();
     let tree = usvg::Tree::from_str(svg, &opt).context("SVG parsing failed (usvg)")?;
     let native = tree.size();
-    std::fs::create_dir_all(out_dir)
-        .with_context(|| format!("failed to create render output directory: {}", out_dir.display()))?;
+    std::fs::create_dir_all(out_dir).with_context(|| {
+        format!(
+            "failed to create render output directory: {}",
+            out_dir.display()
+        )
+    })?;
 
     let mut out = Vec::new();
     for &size in sizes {
-        let mut pixmap =
-            Pixmap::new(size, size).ok_or_else(|| anyhow!("Pixmap creation failed (size={size})"))?;
+        let mut pixmap = Pixmap::new(size, size)
+            .ok_or_else(|| anyhow!("Pixmap creation failed (size={size})"))?;
         let scale = size as f32 / native.width().max(1.0);
         let transform = Transform::from_scale(scale, scale);
         resvg::render(&tree, transform, &mut pixmap.as_mut());

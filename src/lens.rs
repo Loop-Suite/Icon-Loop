@@ -3,7 +3,12 @@ use crate::models::IconCandidate;
 use crate::spec::{Persona, Spec};
 use anyhow::{Context, Result};
 
-fn build_prompt(spec: &Spec, persona: &Persona, dead_concepts: &str, prior: Option<(&str, &str)>) -> String {
+fn build_prompt(
+    spec: &Spec,
+    persona: &Persona,
+    dead_concepts: &str,
+    prior: Option<(&str, &str)>,
+) -> String {
     let palette_list = spec.palette.join(", ");
     let refine_block = match prior {
         Some((prior_svg, critique_text)) => format!(
@@ -40,13 +45,21 @@ fn build_prompt(spec: &Spec, persona: &Persona, dead_concepts: &str, prior: Opti
 }
 
 fn extract_svg(raw: &str) -> Result<String> {
-    let start = raw
-        .find("<svg")
-        .ok_or_else(|| anyhow::anyhow!("No <svg> found in response: {}", crate::llm::truncate(raw, 200)))?;
+    let start = raw.find("<svg").ok_or_else(|| {
+        anyhow::anyhow!(
+            "No <svg> found in response: {}",
+            crate::llm::truncate(raw, 200)
+        )
+    })?;
     let end = raw
         .rfind("</svg>")
         .map(|i| i + "</svg>".len())
-        .ok_or_else(|| anyhow::anyhow!("No </svg> found in response: {}", crate::llm::truncate(raw, 200)))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No </svg> found in response: {}",
+                crate::llm::truncate(raw, 200)
+            )
+        })?;
     anyhow::ensure!(start < end, "Invalid SVG tag range");
     Ok(raw[start..end].to_string())
 }

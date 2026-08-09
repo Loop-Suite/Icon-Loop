@@ -23,7 +23,10 @@ pub fn write(
         "**Verdict: {} — {} (Borda {}pt)**\n\n",
         quant.winner, winner_persona, winner_score
     ));
-    md.push_str(&format!("Judging panel: {}\n\n", quant.critic_diversity_note));
+    md.push_str(&format!(
+        "Judging panel: {}\n\n",
+        quant.critic_diversity_note
+    ));
     if let Some(warning) = &quant.unanimous_warning {
         md.push_str(&format!("⚠️ {warning}\n\n"));
     }
@@ -53,7 +56,12 @@ pub fn write(
             if policy.overall_pass { "PASS" } else { "FAIL" }
         ));
         for check in &policy.checks {
-            md.push_str(&format!("- [{}] {}: {}\n", check.status.label(), check.id, check.evidence));
+            md.push_str(&format!(
+                "- [{}] {}: {}\n",
+                check.status.label(),
+                check.id,
+                check.evidence
+            ));
         }
         md.push('\n');
     }
@@ -76,10 +84,14 @@ pub fn write(
                 item.biggest_flaw
             ));
         }
-        md.push_str(&format!("Ranking: {}\n\n", round_result.ranking.join(" > ")));
+        md.push_str(&format!(
+            "Ranking: {}\n\n",
+            round_result.ranking.join(" > ")
+        ));
     }
 
     let path = out_dir.join("report.md");
-    std::fs::write(&path, &md).with_context(|| format!("failed to write report.md: {}", path.display()))?;
+    std::fs::write(&path, &md)
+        .with_context(|| format!("failed to write report.md: {}", path.display()))?;
     Ok(path)
 }

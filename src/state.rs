@@ -19,7 +19,8 @@ pub struct State {
 pub fn write(out_dir: &Path, state: &State) -> Result<()> {
     let path = out_dir.join("state.json");
     let json = serde_json::to_string_pretty(state)?;
-    std::fs::write(&path, json).with_context(|| format!("failed to write state.json: {}", path.display()))?;
+    std::fs::write(&path, json)
+        .with_context(|| format!("failed to write state.json: {}", path.display()))?;
     Ok(())
 }
 
@@ -31,5 +32,6 @@ pub fn load(run_dir: &Path) -> Result<State> {
     };
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read state.json: {}", path.display()))?;
-    serde_json::from_str(&raw).with_context(|| format!("failed to parse state.json: {}", path.display()))
+    serde_json::from_str(&raw)
+        .with_context(|| format!("failed to parse state.json: {}", path.display()))
 }

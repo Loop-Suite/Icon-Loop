@@ -32,7 +32,9 @@ fn round_prompt(spec: &Spec, blind_ids: &[String], image_dir: &Path) -> String {
         .map(|id| {
             format!(
                 "- {id}:\n    {}\n    {}\n    {}",
-                image_dir.join(format!("{id}_{}.png", spec.canvas)).display(),
+                image_dir
+                    .join(format!("{id}_{}.png", spec.canvas))
+                    .display(),
                 image_dir.join(format!("{id}_60.png")).display(),
                 image_dir
                     .join(format!("{id}_{}.png", spec.legibility_size))
