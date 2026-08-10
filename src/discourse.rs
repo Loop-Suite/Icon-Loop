@@ -27,26 +27,41 @@ struct RawResponse {
 }
 
 fn round_prompt(spec: &Spec, blind_ids: &[String], image_dir: &Path) -> String {
+    // The catalog text must describe exactly the images run_one() actually attaches (one per
+    // spec.render_sizes entry, per candidate) — a prior version hardcoded "3 images" (canvas /
+    // 60px / legibility_size) here while run_one() attached one image per spec.render_sizes entry
+    // (4 by default), so the OpenRouter backend — which has no filename metadata on attached
+    // images and must infer candidate boundaries from the stated count — silently mispaired every
+    // candidate after the first. Deriving both from spec.render_sizes keeps them in lockstep.
     let catalog = blind_ids
         .iter()
         .map(|id| {
-            format!(
-                "- {id}:\n    {}\n    {}\n    {}",
-                image_dir
-                    .join(format!("{id}_{}.png", spec.canvas))
-                    .display(),
-                image_dir.join(format!("{id}_60.png")).display(),
-                image_dir
-                    .join(format!("{id}_{}.png", spec.legibility_size))
-                    .display(),
-            )
+            let paths = spec
+                .render_sizes
+                .iter()
+                .map(|&size| {
+                    format!(
+                        "    {}",
+                        image_dir.join(format!("{id}_{size}.png")).display()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("- {id}:\n{paths}")
         })
         .collect::<Vec<_>>()
         .join("\n");
 
+    let sizes_label = spec
+        .render_sizes
+        .iter()
+        .map(|size| format!("{size}px"))
+        .collect::<Vec<_>>()
+        .join(" / ");
+
     format!(
         "## Product context\n{}\n\n\
-         ## Task\nCheck 3 images per candidate (large size / 60px / {}px) — they're either attached \
+         ## Task\nCheck {} image(s) per candidate ({sizes_label}) — they're either attached \
          directly as vision input in the message, or available at the paths below via the Read tool \
          (either way, actually look at them). Since you haven't been told the intent, answer with \
          your pure first impression first.\n\n\
@@ -61,7 +76,7 @@ fn round_prompt(spec: &Spec, blind_ids: &[String], image_dir: &Path) -> String {
          {{\"items\":[{{\"candidate_id\":\"...\",\"blind_read\":\"...\",\"category_signal\":\"...\",\
          \"legibility_29px\":\"...\",\"biggest_flaw\":\"...\"}}],\"ranking\":[\"...\"]}}",
         spec.context.trim(),
-        spec.legibility_size,
+        spec.render_sizes.len(),
     )
 }
 
@@ -110,11 +125,19 @@ pub fn run_one(
         .into_iter()
         .filter(|id| valid_ids.contains(id))
         .collect();
+    // Length alone doesn't guarantee "every candidate exactly once" — a ranking that duplicates
+    // one candidate and omits another has the same length as a valid one and would silently slip
+    // through, double-counting the duplicate and zeroing the omitted candidate's Borda score in
+    // quantify.rs. Checking the count of distinct ids against blind_ids.len() as well closes that
+    // gap: combined with the length check, it forces the filtered ranking to be exactly the set of
+    // valid ids with no repeats and no gaps.
+    let unique_ranked: std::collections::HashSet<&String> = ranking.iter().collect();
     anyhow::ensure!(
-        ranking.len() == blind_ids.len(),
-        "critic {critic_index}({}) ranking does not cover all candidates ({}/{})",
+        ranking.len() == blind_ids.len() && unique_ranked.len() == blind_ids.len(),
+        "critic {critic_index}({}) ranking does not cover all candidates exactly once ({} entries, {} unique, {} expected)",
         llm.provider_label,
         ranking.len(),
+        unique_ranked.len(),
         blind_ids.len()
     );
 
