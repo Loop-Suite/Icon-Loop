@@ -78,7 +78,13 @@ fn check_containment(spec: &Spec, native_render: &Rendered) -> PolicyCheck {
 }
 
 fn check_palette(spec: &Spec, svg_source: &str) -> Result<PolicyCheck> {
-    let re = Regex::new(r#"fill="(#[0-9a-fA-F]{6})""#).context("regex compilation failed")?;
+    // Matches both `fill="#rrggbb"` and `fill='#rrggbb'` — XML attribute values may legally use
+    // either quote character, and nothing constrains the lens LLM's output to double quotes
+    // specifically, so a single-quote-only regex would silently let an off-palette color slip past
+    // this gate whenever the LLM happens to emit single-quoted attributes. (The `regex` crate has
+    // no backreferences, so this doesn't enforce that the opening/closing quote match — fine here,
+    // since we're scanning for fill declarations, not validating XML well-formedness.)
+    let re = Regex::new(r#"fill=["'](#[0-9a-fA-F]{6})["']"#).context("regex compilation failed")?;
     let allowed: std::collections::HashSet<String> =
         spec.palette.iter().map(|h| h.to_lowercase()).collect();
 
@@ -243,5 +249,96 @@ mod tests {
         );
         assert_eq!(legibility.status, PolicyStatus::Pass);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    fn unique_tmp_dir(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "icon-loop-policy-test-{}-{label}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn palette_check_catches_stray_color_in_single_quoted_fill() {
+        let spec = spec_with_bg("#000000");
+        // Only #ffffff is in-palette; #ff00ff is a stray color written with single quotes — the
+        // original double-quote-only regex would have missed this entirely and reported Pass.
+        let svg =
+            r#"<svg viewBox="0 0 100 100"><rect fill='#ff00ff' width="10" height="10"/></svg>"#;
+        let check = check_palette(&spec, svg).expect("check_palette should succeed");
+        assert_eq!(
+            check.status,
+            PolicyStatus::Fail,
+            "a single-quoted stray fill color must be caught, not silently pass: {}",
+            check.evidence
+        );
+    }
+
+    #[test]
+    fn palette_check_accepts_single_quoted_in_palette_fill() {
+        let spec = spec_with_bg("#000000");
+        let svg =
+            r#"<svg viewBox="0 0 100 100"><rect fill='#ffffff' width="10" height="10"/></svg>"#;
+        let check = check_palette(&spec, svg).expect("check_palette should succeed");
+        assert_eq!(check.status, PolicyStatus::Pass, "{}", check.evidence);
+    }
+
+    #[test]
+    fn translucent_foreground_pixel_is_counted_as_foreground_not_background() {
+        // A half-opacity rect drawn over a black background, in a color that is NOT the background
+        // color — the blended pixel's RGB will differ from background_hex, and its alpha is nonzero,
+        // so it must count as foreground even though it's only half-opaque.
+        let tmp = unique_tmp_dir("translucent");
+        let spec = spec_with_bg("#000000");
+        let svg = r##"<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<rect width="100" height="100" fill="#000000"/>
+<rect x="0" y="0" width="100" height="100" fill="#ffffff" fill-opacity="0.5"/>
+</svg>"##;
+        let renders =
+            crate::render::render_all(svg, &spec.render_sizes, &tmp, "c").expect("render");
+        let report = evaluate(&spec, "c", svg, &renders).expect("evaluate");
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert!(
+            report.fg_ratio > 0.9,
+            "a translucent full-canvas overlay of a non-background color should read as ~100% foreground, got {}",
+            report.fg_ratio
+        );
+    }
+
+    #[test]
+    fn gradient_alpha_yields_partial_foreground_ratio_without_panicking() {
+        // A linear gradient fading opacity from 1 (left) to 0 (right) across the full canvas. This
+        // isn't LLM-legal output (the lens prompt forbids gradients), but the renderer/policy code
+        // must still handle a continuous range of per-pixel alpha values robustly — the alpha-aware
+        // background check must not crash or degenerate on partial (non-binary) alpha.
+        let tmp = unique_tmp_dir("gradient-alpha");
+        let spec = spec_with_bg("#000000");
+        let svg = r##"<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="g" x1="0" y1="0" x2="1" y2="0">
+<stop offset="0" stop-color="#ffffff" stop-opacity="1"/>
+<stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+</linearGradient>
+</defs>
+<rect width="100" height="100" fill="#000000"/>
+<rect x="0" y="0" width="100" height="100" fill="url(#g)"/>
+</svg>"##;
+        let renders =
+            crate::render::render_all(svg, &spec.render_sizes, &tmp, "c").expect("render");
+        let report = evaluate(&spec, "c", svg, &renders).expect("evaluate");
+        let _ = std::fs::remove_dir_all(&tmp);
+        // is_background() treats any nonzero alpha as foreground, so the fully-transparent right
+        // edge aside, almost the entire gradient should read as foreground — this pins down current
+        // behavior (nonzero alpha = foreground, regardless of how faint) rather than asserting a
+        // specific fractional ratio, since the exact anti-aliased boundary is renderer-dependent.
+        assert!(
+            report.fg_ratio > 0.0,
+            "gradient alpha must not evaluate to 0% foreground"
+        );
+        assert!(
+            report.fg_ratio <= 1.0,
+            "foreground ratio must not exceed 100%, got {}",
+            report.fg_ratio
+        );
     }
 }
