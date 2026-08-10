@@ -9,6 +9,17 @@ use regex::Regex;
 
 const AA_TOLERANCE_PX: f32 = 3.0;
 
+/// A pixel counts as "background" if its RGB matches `background_hex` exactly, or if it's fully
+/// transparent. Pixmap::new zero-initializes its buffer, so any canvas area the SVG never actually
+/// painted is left as premultiplied (0, 0, 0, 0) — and premultiplied alpha requires r,g,b <= a, so a
+/// transparent pixel's RGB is always (0, 0, 0) no matter what background_hex says. Comparing RGB
+/// alone would only coincidentally treat unpainted area as background when background_hex is
+/// "#000000"; for any other background color, unpainted canvas (e.g. from a background rect that
+/// doesn't fully cover the canvas) would be misread as foreground.
+fn is_background(px: tiny_skia::PremultipliedColorU8, bg: (u8, u8, u8)) -> bool {
+    px.alpha() == 0 || (px.red() == bg.0 && px.green() == bg.1 && px.blue() == bg.2)
+}
+
 fn parse_hex(hex: &str) -> Option<(u8, u8, u8)> {
     let hex = hex.trim_start_matches('#');
     if hex.len() != 6 {
@@ -30,7 +41,7 @@ fn check_containment(spec: &Spec, native_render: &Rendered) -> PolicyCheck {
     let mut max_y = -1i64;
 
     for (i, px) in pixmap.pixels().iter().enumerate() {
-        if px.red() == bg_r && px.green() == bg_g && px.blue() == bg_b {
+        if is_background(*px, (bg_r, bg_g, bg_b)) {
             continue;
         }
         let x = (i as u32 % w) as i64;
@@ -107,7 +118,7 @@ fn check_legibility(spec: &Spec, legibility_render: &Rendered) -> PolicyCheck {
     let fg = pixmap
         .pixels()
         .iter()
-        .filter(|px| !(px.red() == bg_r && px.green() == bg_g && px.blue() == bg_b))
+        .filter(|px| !is_background(**px, (bg_r, bg_g, bg_b)))
         .count() as f32;
     let ratio = fg / total;
     let ok = ratio >= spec.min_fg_ratio && ratio <= spec.max_fg_ratio;
@@ -174,4 +185,63 @@ pub fn evaluate(
             .map(|r| (r.size, r.path.to_string_lossy().to_string()))
             .collect(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec_with_bg(background_hex: &str) -> Spec {
+        Spec {
+            name: "test".to_string(),
+            context: String::new(),
+            canvas: 100,
+            margin_ratio: 0.10,
+            render_sizes: vec![100],
+            legibility_size: 100,
+            min_fg_ratio: 0.0,
+            // Deliberately below 1.0: before the alpha fix, the untouched (transparent) half of the
+            // canvas was misread as foreground too, pushing the ratio to ~1.0 and failing this bound.
+            max_fg_ratio: 0.6,
+            background_hex: background_hex.to_string(),
+            palette: vec!["#ffffff".to_string()],
+            n_critics: 1,
+            critic_backends: vec!["claude".to_string()],
+            openrouter_critic_model: "x-ai/grok-4.5".to_string(),
+            personas: vec![],
+        }
+    }
+
+    // A background rect that only covers the top-left half of the canvas — simulating a
+    // non-compliant LLM output that doesn't fully paint the canvas (rounded corners, a slightly
+    // undersized rect, a viewBox mismatch, ...). The rest of the pixmap stays fully transparent.
+    const HALF_COVERED_SVG: &str = r##"<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+<rect x="0" y="0" width="100" height="50" fill="#ffffff"/>
+</svg>"##;
+
+    #[test]
+    fn transparent_canvas_area_is_not_foreground_regardless_of_background_hex() {
+        let tmp =
+            std::env::temp_dir().join(format!("icon-loop-policy-test-{}", std::process::id()));
+        let spec = spec_with_bg("#ff00ff"); // deliberately not black, unlike the shipped example spec
+        let renders = crate::render::render_all(HALF_COVERED_SVG, &spec.render_sizes, &tmp, "c")
+            .expect("render should succeed");
+        let report =
+            evaluate(&spec, "c", HALF_COVERED_SVG, &renders).expect("evaluate should succeed");
+        let legibility = report
+            .checks
+            .iter()
+            .find(|c| c.id == "legibility")
+            .expect("legibility check present");
+        // Only the painted top half (50%) should count as foreground — the untouched, fully
+        // transparent bottom half must not be misread as foreground just because it doesn't match
+        // background_hex's RGB.
+        assert!(
+            (report.fg_ratio - 0.5).abs() < 0.01,
+            "expected ~50% foreground (only the painted half), got {}",
+            report.fg_ratio
+        );
+        assert_eq!(legibility.status, PolicyStatus::Pass);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
