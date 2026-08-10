@@ -20,10 +20,25 @@ use std::process::{Command, Stdio};
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 pub const OPENROUTER_DEFAULT_MODEL: &str = "openai/gpt-oss-120b";
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Provider {
     ClaudeCli { bin: String },
     OpenRouter { api_key: String },
+}
+
+// Manual Debug impl (instead of derive) so `api_key` can never be printed verbatim by a future
+// `dbg!`, `{:?}`-formatting error wrapper, or log line — `derive(Debug)` on a variant holding a raw
+// secret is a footgun regardless of whether any call site currently exercises it.
+impl std::fmt::Debug for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Provider::ClaudeCli { bin } => f.debug_struct("ClaudeCli").field("bin", bin).finish(),
+            Provider::OpenRouter { .. } => f
+                .debug_struct("OpenRouter")
+                .field("api_key", &"***REDACTED***")
+                .finish(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -355,5 +370,43 @@ pub fn truncate(value: &str, limit: usize) -> String {
         value.to_string()
     } else {
         value.chars().take(limit).collect::<String>() + "…"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_debug_never_prints_the_raw_api_key() {
+        let secret = "sk-or-v1-super-secret-do-not-leak";
+        let provider = Provider::OpenRouter {
+            api_key: secret.to_string(),
+        };
+        let debug_output = format!("{provider:?}");
+        assert!(
+            !debug_output.contains(secret),
+            "Provider's Debug output must never contain the raw api_key, got: {debug_output}"
+        );
+        assert!(debug_output.contains("REDACTED"));
+    }
+
+    #[test]
+    fn llm_debug_never_prints_the_raw_api_key() {
+        let secret = "sk-or-v1-another-super-secret";
+        let llm = Llm {
+            provider_label: "openrouter",
+            provider: Provider::OpenRouter {
+                api_key: secret.to_string(),
+            },
+            model: None,
+            retries: 0,
+            verbose: false,
+        };
+        let debug_output = format!("{llm:?}");
+        assert!(
+            !debug_output.contains(secret),
+            "Llm's Debug output (which formats its Provider field) must never contain the raw api_key, got: {debug_output}"
+        );
     }
 }
