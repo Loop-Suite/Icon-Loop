@@ -59,6 +59,12 @@ fn round_prompt(spec: &Spec, blind_ids: &[String], image_dir: &Path) -> String {
         .collect::<Vec<_>>()
         .join(" / ");
 
+    // category_signal must stay derived from spec.context, not a fixed domain: icon-loop is a
+    // general-purpose icon design tool, and a previous version hardcoded this field to "whether it
+    // signals a fortune-telling/mysticism app" — which only ever looked correct because the shipped
+    // example spec (specs/default.toml) happens to be a divination-app brief. For any other spec
+    // (finance/fitness/game/...) that wording forced every critic to judge candidates against a
+    // completely unrelated axis.
     format!(
         "## Product context\n{}\n\n\
          ## Task\nCheck {} image(s) per candidate ({sizes_label}) — they're either attached \
@@ -68,7 +74,7 @@ fn round_prompt(spec: &Spec, blind_ids: &[String], image_dir: &Path) -> String {
          {catalog}\n\n\
          Fill in the following for each candidate:\n\
          - blind_read: your first impression of what it looks like from the large size alone, with no context (most important — describe what it actually looks like, not what you guess the intent to be)\n\
-         - category_signal: whether it signals a fortune-telling/mysticism app\n\
+         - category_signal: whether the visual metaphor actually matches the app's domain described in the product context above (not a mismatched or generic trope)\n\
          - legibility_29px: whether the silhouette holds up at small render sizes, or turns into a blur\n\
          - biggest_flaw: the most noticeable flaw (\"none\" if there isn't one)\n\n\
          Finally, list every candidate id from above in ranking, ordered from 1st place (no ties, no omissions).\n\n\
@@ -147,4 +153,56 @@ pub fn run_one(
         items: raw.items,
         ranking,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spec_with_context(context: &str) -> Spec {
+        Spec {
+            name: "test".to_string(),
+            context: context.to_string(),
+            canvas: 100,
+            margin_ratio: 0.10,
+            render_sizes: vec![100],
+            legibility_size: 100,
+            min_fg_ratio: 0.0,
+            max_fg_ratio: 1.0,
+            background_hex: "#000000".to_string(),
+            palette: vec!["#ffffff".to_string()],
+            n_critics: 1,
+            critic_backends: vec!["claude".to_string()],
+            openrouter_critic_model: "x-ai/grok-4.5".to_string(),
+            personas: vec![],
+        }
+    }
+
+    #[test]
+    fn category_signal_instruction_is_not_hardcoded_to_mysticism() {
+        // Regression test for the bug where category_signal's instruction was hardcoded to
+        // "whether it signals a fortune-telling/mysticism app" regardless of spec.context — for a
+        // non-divination spec (e.g. a finance app, as here) this must not appear in the prompt.
+        let spec = spec_with_context("A budgeting app for personal finance.");
+        let prompt = round_prompt(&spec, &["a".to_string()], Path::new("/tmp"));
+        let lower = prompt.to_lowercase();
+        assert!(
+            !lower.contains("fortune-telling") && !lower.contains("mysticism"),
+            "category_signal instruction must not be hardcoded to a fixed domain: {prompt}"
+        );
+    }
+
+    #[test]
+    fn category_signal_instruction_references_product_context() {
+        // The generalized instruction must actually point the critic back at spec.context (rather
+        // than swapping one hardcoded domain for another), so it stays correct for any spec.
+        let spec = spec_with_context("A fitness tracking app.");
+        let prompt = round_prompt(&spec, &["a".to_string()], Path::new("/tmp"));
+        assert!(
+            prompt.contains(
+                "category_signal: whether the visual metaphor actually matches the app's domain"
+            ),
+            "category_signal instruction should reference the app's domain from context: {prompt}"
+        );
+    }
 }
