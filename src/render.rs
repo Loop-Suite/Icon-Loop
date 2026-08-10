@@ -161,4 +161,17 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    #[test]
+    fn minimum_valid_render_size_of_one_pixel_succeeds() {
+        // The extreme-small-canvas boundary counterpart to zero_render_size_returns_error_not_panic
+        // — size=1 is the smallest legal Pixmap and must render successfully, not error.
+        let tmp = unique_tmp_dir("min-size");
+        let result = render_all(MINIMAL_SVG, &[1], &tmp, "c");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let rendered = result.expect("a 1x1 render size must succeed");
+        assert_eq!(rendered.len(), 1);
+        assert_eq!(rendered[0].pixmap.width(), 1);
+        assert_eq!(rendered[0].pixmap.height(), 1);
+    }
 }
