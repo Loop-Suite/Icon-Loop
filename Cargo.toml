@@ -19,6 +19,6 @@ serde_json = "1"
 toml = "0.8"
 ureq = { version = "2", features = ["json"] }
 regex = "1"
-resvg = "0.47"
+resvg = "0.48"
 usvg = "0.47"
 tiny-skia = "0.12"
