@@ -78,6 +78,17 @@ impl Spec {
             "too many personas ({}, max {MAX_CALL_COUNT}) — would trigger an unbounded number of LLM calls",
             self.personas.len()
         );
+        // persona.id is not an internal-only label: lens::run() copies it verbatim into
+        // IconCandidate.id, which render::render_all then uses as a PNG filename component
+        // ({id}_{size}.png — a duplicate silently overwrites the earlier candidate's renders) and
+        // quantify::borda_count uses as the HashMap aggregation key (a duplicate silently merges two
+        // personas' rankings into one scoring bucket). Catch the collision here, at spec-load time,
+        // rather than as a silent downstream file clobber / ranking corruption.
+        let mut persona_ids: Vec<&str> = self.personas.iter().map(|p| p.id.as_str()).collect();
+        persona_ids.sort_unstable();
+        let n = persona_ids.len();
+        persona_ids.dedup();
+        anyhow::ensure!(persona_ids.len() == n, "duplicate persona id");
         anyhow::ensure!(
             (1..=MAX_RENDER_DIMENSION).contains(&self.canvas),
             "canvas out of range ({}, must be 1..={MAX_RENDER_DIMENSION})",
@@ -207,6 +218,33 @@ mod tests {
         let mut spec = valid_spec();
         spec.n_critics = 100_000;
         assert!(spec.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_persona_id() {
+        // persona.id becomes IconCandidate.id downstream (lens.rs), which render.rs uses as a PNG
+        // filename component and quantify.rs uses as a Borda-tally HashMap key — a duplicate would
+        // silently overwrite renders and merge two personas' rankings into one bucket.
+        let mut spec = valid_spec();
+        spec.personas = vec![
+            Persona {
+                id: "dup".to_string(),
+                persona_name: "Persona A".to_string(),
+                philosophy: "a".to_string(),
+            },
+            Persona {
+                id: "dup".to_string(),
+                persona_name: "Persona B".to_string(),
+                philosophy: "b".to_string(),
+            },
+        ];
+        let err = spec
+            .validate()
+            .expect_err("duplicate persona id must be rejected");
+        assert!(
+            format!("{err:#}").contains("duplicate persona id"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test]

@@ -84,14 +84,28 @@ fn check_palette(spec: &Spec, svg_source: &str) -> Result<PolicyCheck> {
     // this gate whenever the LLM happens to emit single-quoted attributes. (The `regex` crate has
     // no backreferences, so this doesn't enforce that the opening/closing quote match — fine here,
     // since we're scanning for fill declarations, not validating XML well-formedness.)
-    let re = Regex::new(r#"fill=["'](#[0-9a-fA-F]{6})["']"#).context("regex compilation failed")?;
+    //
+    // Also matches `fill:#rrggbb` packed inside a CSS `style="..."` attribute — SVG legally allows
+    // presentation properties to be set either as a plain XML attribute or via CSS syntax inside
+    // `style`, and the plain-attribute pattern above never sees the latter form. Without this second
+    // alternative, an LLM that emits `style="fill:#rrggbb"` instead of `fill="#rrggbb"` bypasses the
+    // palette gate entirely.
+    let re = Regex::new(
+        r#"(?:fill=["'](#[0-9a-fA-F]{6})["'])|(?:style=["'][^"']*?fill\s*:\s*(#[0-9a-fA-F]{6})[^"']*["'])"#,
+    )
+    .context("regex compilation failed")?;
     let allowed: std::collections::HashSet<String> =
         spec.palette.iter().map(|h| h.to_lowercase()).collect();
 
     let mut used = std::collections::HashSet::new();
     let mut stray = Vec::new();
     for cap in re.captures_iter(svg_source) {
-        let hex = cap[1].to_lowercase();
+        let hex = cap
+            .get(1)
+            .or_else(|| cap.get(2))
+            .expect("one alternative must match")
+            .as_str()
+            .to_lowercase();
         used.insert(hex.clone());
         if !allowed.contains(&hex) && !stray.contains(&hex) {
             stray.push(hex);
@@ -279,6 +293,30 @@ mod tests {
         let spec = spec_with_bg("#000000");
         let svg =
             r#"<svg viewBox="0 0 100 100"><rect fill='#ffffff' width="10" height="10"/></svg>"#;
+        let check = check_palette(&spec, svg).expect("check_palette should succeed");
+        assert_eq!(check.status, PolicyStatus::Pass, "{}", check.evidence);
+    }
+
+    #[test]
+    fn palette_check_catches_stray_color_in_css_style_fill() {
+        let spec = spec_with_bg("#000000");
+        // #ff00ff is a stray color declared via CSS `style="fill:#rrggbb"` instead of a plain `fill`
+        // XML attribute — the original regex only matched the attribute form and would have missed
+        // this entirely, letting an off-palette color bypass the deterministic gate.
+        let svg = r#"<svg viewBox="0 0 100 100"><rect style="stroke:#000000; fill:#ff00ff;" width="10" height="10"/></svg>"#;
+        let check = check_palette(&spec, svg).expect("check_palette should succeed");
+        assert_eq!(
+            check.status,
+            PolicyStatus::Fail,
+            "a CSS style='fill:#rrggbb' stray color must be caught, not silently pass: {}",
+            check.evidence
+        );
+    }
+
+    #[test]
+    fn palette_check_accepts_in_palette_css_style_fill() {
+        let spec = spec_with_bg("#000000");
+        let svg = r#"<svg viewBox="0 0 100 100"><rect style="fill: #ffffff" width="10" height="10"/></svg>"#;
         let check = check_palette(&spec, svg).expect("check_palette should succeed");
         assert_eq!(check.status, PolicyStatus::Pass, "{}", check.evidence);
     }

@@ -57,6 +57,11 @@ pub struct CritiqueRound {
 pub struct CandidateCritique {
     pub candidate_id: String,
     pub blind_read: String,
+    /// Whether the candidate's visual metaphor actually matches the app's domain, as described in
+    /// `Spec.context` (see `discourse::round_prompt`) — generalized on purpose. An earlier version of
+    /// the prompt hardcoded this to "whether it signals a fortune-telling/mysticism app", which was
+    /// only ever accidentally correct because the shipped example spec is a divination-app brief; for
+    /// any other domain it forced an unrelated evaluation criterion onto every critic.
     pub category_signal: String,
     pub legibility_29px: String,
     pub biggest_flaw: String,
