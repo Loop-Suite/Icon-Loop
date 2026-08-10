@@ -152,6 +152,37 @@ mod tests {
     }
 
     #[test]
+    fn rejects_zero_canvas() {
+        let mut spec = valid_spec();
+        spec.canvas = 0; // Pixmap::new(0, 0) is itself an error ("zero size"); reject at spec level too
+        assert!(spec.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_zero_legibility_size() {
+        let mut spec = valid_spec();
+        spec.legibility_size = 0;
+        assert!(spec.validate().is_err());
+    }
+
+    #[test]
+    fn rejects_zero_render_sizes_entry() {
+        let mut spec = valid_spec();
+        spec.render_sizes = vec![100, 0];
+        assert!(spec.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_minimum_valid_canvas() {
+        // canvas=1 is an extreme but legal boundary value — must not be rejected by the new bounds.
+        let mut spec = valid_spec();
+        spec.canvas = 1;
+        spec.render_sizes = vec![1];
+        spec.legibility_size = 1;
+        spec.validate().expect("canvas=1 is a valid boundary value");
+    }
+
+    #[test]
     fn rejects_empty_render_sizes() {
         let mut spec = valid_spec();
         spec.render_sizes = vec![];
