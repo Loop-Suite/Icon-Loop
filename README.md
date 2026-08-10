@@ -401,6 +401,26 @@ Documented findings from real rounds against the shipped example spec, not a syn
   the text catalog turned an earlier *apparent* cross-provider disagreement (which was actually
   this bug) into a real, checkable-by-eye disagreement between providers on a later run.
 
+## Empirical review findings
+
+A review pass on this repo: two rounds of static code review found 3 real bugs, all fixed and
+merged ([#2](https://github.com/Loop-Suite/Icon-Loop/issues/2),
+[#3](https://github.com/Loop-Suite/Icon-Loop/issues/3),
+[#4](https://github.com/Loop-Suite/Icon-Loop/issues/4)). The most rigorous part isn't the bug
+count — for two of the three ([#3](https://github.com/Loop-Suite/Icon-Loop/issues/3)'s ranking
+check accepting a duplicate+omitted candidate id pair at matching length, and
+[#4](https://github.com/Loop-Suite/Icon-Loop/issues/4)'s policy gate comparing background color
+RGB-only and misreading transparent canvas area as foreground on any non-black background), the
+fix was verified by rolling back to the pre-fix commit and re-running the exact same adversarial
+input: the original bug reproduced live on the unfixed tree and did not reproduce on the fixed
+one. Both reproductions cost $0 — a local fake `claude` binary stood in for the real CLI for #3,
+and the deterministic `iconloop validate` path (no LLM call involved) covered #4.
+
+**Cost is unmeasured, not zero.** icon-loop doesn't log its own LLM call count or spend (no
+`manifest.json`/`usage.calls` equivalent like Code-Review-Loop), so no dollar figure in this
+document is a measured total, only a rough estimate. Full methodology, all three findings, and the
+caveats: [evals/README.md](evals/README.md).
+
 ## Design rationale
 
 Several implementation choices are directly informed by prior work on LLM-judge panels, cited in
