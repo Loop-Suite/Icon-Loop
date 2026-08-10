@@ -1,10 +1,12 @@
 # Empirical review findings — icon-loop
 
-This directory records what actually happened during a review pass on this repo: static review
-findings that became issues and fixes, then a second pass that ran the real CLI (`claude -p` +
-OpenRouter, real API cost where noted) to check whether the fixes actually held up — including,
-for two of the three findings, rolling back to the pre-fix code and re-running the *same* input to
-watch the original bug reproduce. This file is the record of that, not a promotional summary.
+This directory records what actually happened during review passes on this repo: static review
+findings that became issues and fixes, a pass that ran the real CLI (`claude -p` + OpenRouter, real
+API cost where noted) to check whether the fixes actually held up — including, for two of the
+first three findings, rolling back to the pre-fix code and re-running the *same* input to watch
+the original bug reproduce — and later a separate adversarial re-audit (round 3) that found and
+fixed four more issues, including a path-traversal arbitrary-file-write, before the `v0.1.0` tag.
+This file is the record of that, not a promotional summary.
 
 ## TL;DR
 
@@ -16,9 +18,14 @@ watch the original bug reproduce. This file is the record of that, not a promoti
 | #3 fix check | Local fake-`claude` binary (zero API cost), duplicate+omission ranking injected | Post-fix: rejected immediately. Pre-fix (rolled back): passed silently, wrong winner selected |
 | #4 fix check | `iconloop validate` (deterministic render, no LLM calls), non-black background + half-painted SVG | Post-fix: transparent area correctly excluded. Pre-fix (rolled back): containment FAIL, bbox inflated to full canvas |
 | End-to-end re-run | Real `claude -p` + OpenRouter with user-supplied API key, mixed critic backends, 2 personas, non-black background spec | Policy gate PASS, both critics responded, winner selected, `report.md` generated |
+| Static review, round 3 (adversarial re-audit) | Manual code read, no execution | 4 more real bugs found ([#13](https://github.com/Loop-Suite/Icon-Loop/issues/13) path traversal, [#14](https://github.com/Loop-Suite/Icon-Loop/issues/14) resource exhaustion, [#15](https://github.com/Loop-Suite/Icon-Loop/issues/15) palette gate bypass, [#16](https://github.com/Loop-Suite/Icon-Loop/issues/16) latent key-leak footgun), all fixed; SVG entity bomb/XXE audited and ruled out (already mitigated upstream by `roxmltree`) |
+| Edge-case test suite | `cargo test` | 1 → 26 tests (malformed/truncated/empty SVG, empty spec file, canvas/render bounds at 0/1/8192/50000, translucent pixels, gradient alpha) |
+| Versioning | `CHANGELOG.md` + git tag | `v0.1.0` tagged and released |
+| Local validate spot-check | `iconloop validate` (no LLM calls, $0) | Translucent + gradient-alpha specs: no crash/panic on either; behavior matches the round-3 regression tests |
 
 No further bugs were found once real execution started — everything from that point on was
-verification that the three static-review fixes actually work, not new discovery.
+verification that the static-review fixes actually work, not new discovery (round 3's adversarial
+re-audit is a separate, later static-review pass — see below).
 
 **What this bought:**
 
@@ -54,6 +61,11 @@ verification that the three static-review fixes actually work, not new discovery
   project's evals, the numbers here cannot report an exact real dollar cost per run. Costs below
   are rough estimates from call count and known per-call model pricing, marked as such, not
   measured totals.
+- **A later adversarial re-audit (round 3, below) found the most serious bug in this repo's
+  history before `v0.1.0` shipped it**: [#13](https://github.com/Loop-Suite/Icon-Loop/issues/13),
+  a path traversal / arbitrary file write via an unsanitized candidate id. Static review caught it
+  the same way it caught #2–#4 — by reading the code, not by triggering it — and it was fixed,
+  tested, and tagged into the same release rather than discovered after.
 
 ## Round 1: static review — #2, #3
 
@@ -175,6 +187,116 @@ correctly end to end. This wasn't a targeted regression check for any single iss
 general confidence check that the fixed pipeline still produces a complete, working result under
 close-to-real usage conditions (real key, mixed backends, non-default spec).
 
+## Round 3: production-hardening — adversarial re-audit, edge cases, versioning
+
+A later, separate pass, not a continuation of rounds 1–2: instead of reading for correctness bugs,
+this pass re-read `policy.rs`, `render.rs`, `spec.rs`, and `llm.rs` adversarially — "what does an
+attacker-controlled or merely malformed input make this code do" — plus added the edge-case test
+coverage that was still missing, and cut the first tagged release. All landed in
+[PR #17](https://github.com/Loop-Suite/Icon-Loop/pull/17),
+[PR #18](https://github.com/Loop-Suite/Icon-Loop/pull/18), and
+[PR #19](https://github.com/Loop-Suite/Icon-Loop/pull/19).
+
+### Adversarial re-audit — #13, #14, #15, #16
+
+**[#13](https://github.com/Loop-Suite/Icon-Loop/issues/13) — path traversal / arbitrary file write
+via unsanitized candidate id (most severe finding in this document).** `render::render_all` built
+its PNG output path with `out_dir.join(format!("{candidate_id}_{size}.png"))`, and `candidate_id`
+flows in unsanitized from `Persona.id` in the spec TOML (`design`/`refine`) or from
+`state.json`'s `candidates[].id` (`validate`) — both are attacker/author-controlled data, not
+generated internally. A `candidate_id` containing `..` can walk out of `out_dir`; an absolute-path
+`candidate_id` is worse, because `PathBuf::join` silently discards the base path entirely and
+resolves to the absolute path as-is. Either way, `save_png()` becomes an arbitrary file
+write/overwrite, gated only by the invoking OS user's file permissions. Fixed by adding
+`ensure_safe_id()` (rejects empty ids, ids containing `/` or `\`, and ids equal to `.` or `..`),
+called at the top of `render_all` so both entry points are covered by one check
+([`806de3a`](https://github.com/Loop-Suite/Icon-Loop/commit/806de3a4e618e4f81a2a347ee74729265e7dd065)).
+
+**[#14](https://github.com/Loop-Suite/Icon-Loop/issues/14) — no upper bound on
+canvas/render_sizes/n_critics/personas: resource exhaustion.** `Spec::load` only checked lower
+bounds (non-empty personas/palette, `n_critics >= 1`); nothing capped the size fields or the count
+fields. Two distinct failure modes: (1) `render::render_all` allocates a `width*height*4`-byte
+`Pixmap` per render size with no other cap — a size well under `tiny_skia`'s own `i32::MAX/4`
+limit (e.g. 50,000px) is already a multi-gigabyte allocation, and Rust's default allocator aborts
+the process on allocation failure rather than returning a recoverable error, so a bad spec value
+crashes the whole process, not just that render; (2) `n_critics` and `personas.len()` directly
+control how many real, billed LLM calls one invocation makes, with no confirmation step, so a
+typo'd spec could turn one `iconloop design` into thousands of API calls. Fixed by adding
+`Spec::validate` with `MAX_RENDER_DIMENSION = 8192` (px, per canvas/render_sizes/legibility_size
+dimension) and `MAX_CALL_COUNT = 50` (for `n_critics` and `personas.len()`) — generous headroom
+above the shipped example spec (1024px canvas, 3 personas, `n_critics=3`), called from `load()`.
+
+**[#15](https://github.com/Loop-Suite/Icon-Loop/issues/15) — palette policy gate bypassed by
+single-quoted `fill` attributes.** `check_palette`'s regex was
+`fill="(#[0-9a-fA-F]{6})"` — double-quoted only. XML attribute values may legally use either quote
+character (`fill='#rrggbb'` is just as valid as `fill="#rrggbb"`), and nothing in the lens prompt
+(`src/lens.rs`) constrains the LLM's SVG output to double-quoted attributes specifically — it only
+constrains which hex values are allowed. A single-quoted, off-palette fill color was therefore
+invisible to the regex and passed the deterministic palette gate undetected, defeating the
+guarantee that gate exists to provide. Fixed by widening the regex to
+`fill=["'](#[0-9a-fA-F]{6})["']` (the `regex` crate has no backreference support, so this doesn't
+require the opening/closing quote to match each other — acceptable here since the check is
+scanning for fill declarations, not validating XML well-formedness).
+
+**[#16](https://github.com/Loop-Suite/Icon-Loop/issues/16) — `Provider`'s derived `Debug` would
+print the raw `OPENROUTER_API_KEY` verbatim if ever `{:?}`-formatted.** `Provider::OpenRouter {
+api_key: String }` derived `Debug`, so a future stray `dbg!()`, an error wrapper that formats with
+`{:?}` instead of `{}`, or a new log line would print the key in plain text. Checked every current
+call site before fixing: `ureq::Error`'s `Display` impl (verified against the vendored `ureq`
+3.3.0 source, not assumed) never includes request headers, and every `call_openrouter` error
+branch only formats the response body, never the outgoing `Authorization` header — so **no live
+leak exists in the code as shipped today**. Fixed anyway, as a latent footgun independent of
+whether any current call site exercises it: replaced the derive with a manual `Debug` impl on
+`Provider` that redacts `api_key` to `"***REDACTED***"`; `Llm` keeps its derive since it no longer
+exposes the raw key once `Provider`'s `Debug` is fixed.
+
+**Audited and ruled out (no fix needed):** SVG entity-expansion ("billion laughs") and XXE.
+`usvg`'s underlying `roxmltree` parser has its own built-in entity-reference-loop/depth limit
+(≤10 nesting levels, ≤255 total references) and does not resolve external entities by default
+(`entity_resolver: None`) — both classes of attack are already mitigated upstream, independent of
+anything in this repo's own code.
+
+### Edge-case test suite: 1 → 26 tests
+
+Before this round the repo had exactly 1 test. [PR #17](https://github.com/Loop-Suite/Icon-Loop/pull/17)
+added regression tests for all four fixes above plus general malformed/empty-input coverage
+(malformed SVG, truncated SVG, empty SVG, empty spec file, a zero render size) — 21 tests total.
+[PR #18](https://github.com/Loop-Suite/Icon-Loop/pull/18) closed the remaining gap: round-1
+testing covered the *upper* size bound (oversized canvas/render_sizes from #14) but not the
+*lower*/zero boundary. Added `canvas=0`, `legibility_size=0`, and a zero `render_sizes` entry all
+rejected by `Spec::validate`; `canvas=1` (smallest legal value) accepted and actually renders a
+correct 1×1 `Pixmap` — the positive counterpart to the existing "size=0 is an error" test. Final
+count: 26 tests, all passing under `cargo test` / `cargo clippy --all-targets -- -D warnings` /
+`cargo fmt --check`.
+
+### Versioning: CHANGELOG.md + v0.1.0
+
+[PR #19](https://github.com/Loop-Suite/Icon-Loop/pull/19) added `CHANGELOG.md` (Keep a Changelog
+format) covering the full history — initial pipeline, the three round-1/round-2 fixes (#2–#4), the
+four round-3 security/robustness fixes (#13–#16), and dependency bumps. `Cargo.toml` was already
+at `version = "0.1.0"`, so no version bump was needed. Tagged and released as
+[`v0.1.0`](https://github.com/Loop-Suite/Icon-Loop/releases/tag/v0.1.0).
+
+### Local `iconloop validate` spot-check: translucent + gradient alpha
+
+A final manual check, separate from the `cargo test` suite: ran `iconloop validate` locally (the
+deterministic render/policy path — no LLM call, $0 cost) against two specs already covered by
+round-3's regression tests, to confirm the CLI itself behaves correctly end-to-end and not just at
+the unit-test level.
+
+- **Translucent-fill spec:** `check_containment` **FAIL**, `check_palette` **PASS**,
+  `check_legibility` **PASS** (foreground ratio 100%). The containment FAIL is expected, not a
+  regression — the spec used is a deliberate full-canvas SVG, so containment correctly rejects it
+  for painting the entire canvas rather than fitting within the intended bounds.
+- **Gradient-alpha spec:** same three results (containment FAIL / palette PASS / legibility PASS),
+  for the same reason.
+- Both runs exited cleanly — no crash, no panic. Both confirm the current, intentional behavior
+  documented by the round-3 regression tests: `is_background()` only treats `alpha == 0` as
+  background, so a gradient's near-zero-but-nonzero alpha at its edge is still counted as
+  foreground, not background. This is the same alpha-handling boundary the
+  `gradient_alpha_yields_partial_foreground_ratio_without_panicking` test pins down — the local CLI
+  run reproduces the same behavior outside the test harness, at $0 additional cost.
+
 ## Cost note (read before trusting any dollar figure here)
 
 icon-loop does not log its own LLM call count or spend anywhere in its output — there is no
@@ -193,6 +315,10 @@ per-call model pricing, not a measured total:
   deterministic validator, respectively — which is also why those two checks are the ones with the
   most confidence behind them: cheap enough to run twice (pre-fix and post-fix) without cost being
   a reason not to.
+- **Round 3 (the #13–#16 adversarial re-audit, the 1→26 edge-case tests, and the translucent/
+  gradient `iconloop validate` spot-check) cost $0 in total.** All of it was static code review,
+  `cargo test`, or the no-LLM `validate` path — no `claude -p` or OpenRouter calls anywhere in this
+  round, unlike round 1's #2 check and the end-to-end re-run above.
 
 If this repo's own CLI is extended to log call counts/cost the way Code-Review-Loop's
 `manifest.json` does, a natural follow-up is re-running this same set of checks with exact numbers

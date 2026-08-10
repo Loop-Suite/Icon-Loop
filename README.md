@@ -403,12 +403,22 @@ Documented findings from real rounds against the shipped example spec, not a syn
 
 ## Empirical review findings
 
-A review pass on this repo: two rounds of static code review found 3 real bugs, all fixed and
-merged ([#2](https://github.com/Loop-Suite/Icon-Loop/issues/2),
+Three review passes on this repo have found and fixed **7 real bugs**, all merged before the
+[`v0.1.0`](https://github.com/Loop-Suite/Icon-Loop/releases/tag/v0.1.0) tag: two rounds of static
+correctness review ([#2](https://github.com/Loop-Suite/Icon-Loop/issues/2),
 [#3](https://github.com/Loop-Suite/Icon-Loop/issues/3),
-[#4](https://github.com/Loop-Suite/Icon-Loop/issues/4)). The most rigorous part isn't the bug
-count — for two of the three ([#3](https://github.com/Loop-Suite/Icon-Loop/issues/3)'s ranking
-check accepting a duplicate+omitted candidate id pair at matching length, and
+[#4](https://github.com/Loop-Suite/Icon-Loop/issues/4)), then a later, separate adversarial
+security/robustness re-audit ([#13](https://github.com/Loop-Suite/Icon-Loop/issues/13),
+[#14](https://github.com/Loop-Suite/Icon-Loop/issues/14),
+[#15](https://github.com/Loop-Suite/Icon-Loop/issues/15),
+[#16](https://github.com/Loop-Suite/Icon-Loop/issues/16)). The most severe finding overall is
+[#13](https://github.com/Loop-Suite/Icon-Loop/issues/13) — an unsanitized candidate id (sourced
+from spec TOML or `state.json`) flowing straight into a render output path, letting `..` or an
+absolute-path id turn into a path traversal / arbitrary file write.
+
+The most rigorous verification isn't the bug count — for two of the first three findings
+([#3](https://github.com/Loop-Suite/Icon-Loop/issues/3)'s ranking check accepting a
+duplicate+omitted candidate id pair at matching length, and
 [#4](https://github.com/Loop-Suite/Icon-Loop/issues/4)'s policy gate comparing background color
 RGB-only and misreading transparent canvas area as foreground on any non-black background), the
 fix was verified by rolling back to the pre-fix commit and re-running the exact same adversarial
@@ -416,10 +426,20 @@ input: the original bug reproduced live on the unfixed tree and did not reproduc
 one. Both reproductions cost $0 — a local fake `claude` binary stood in for the real CLI for #3,
 and the deterministic `iconloop validate` path (no LLM call involved) covered #4.
 
-**Cost is unmeasured, not zero.** icon-loop doesn't log its own LLM call count or spend (no
-`manifest.json`/`usage.calls` equivalent like Code-Review-Loop), so no dollar figure in this
-document is a measured total, only a rough estimate. Full methodology, all three findings, and the
-caveats: [evals/README.md](evals/README.md).
+The later re-audit also added an upper bound on canvas/render-size/critic/persona counts (unbounded
+values could abort the process via a multi-gigabyte allocation, or trigger unbounded billed LLM
+calls), widened the palette-gate regex to catch single-quoted `fill` attributes it previously
+missed, and closed a latent (currently unexploited, confirmed by reading the actual call sites) API
+key `Debug`-leak footgun — plus grew the test suite from 1 to 26 tests covering malformed/empty
+input and size boundaries, and ruled out SVG entity-bomb/XXE as already mitigated upstream by
+`roxmltree`.
+
+**Cost is unmeasured, not zero — except round 3, which was $0.** icon-loop doesn't log its own LLM
+call count or spend (no `manifest.json`/`usage.calls` equivalent like Code-Review-Loop), so dollar
+figures for the rounds that did call a real model are rough estimates, not measured totals. The
+later adversarial re-audit, its edge-case tests, and its `iconloop validate` spot-checks made no
+LLM calls at all, so that round's cost is exactly $0, not an estimate. Full methodology, all seven
+findings, and the caveats: [evals/README.md](evals/README.md).
 
 ## Design rationale
 
