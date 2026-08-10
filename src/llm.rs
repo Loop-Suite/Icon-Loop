@@ -279,22 +279,27 @@ fn call_openrouter(
     let body = serde_json::Value::Object(body);
 
     let response = ureq::post(OPENROUTER_URL)
-        .set("Authorization", &format!("Bearer {api_key}"))
-        .set("Content-Type", "application/json")
+        .config()
+        .http_status_as_error(false)
+        .build()
+        .header("Authorization", &format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
         .send_json(body);
-    let response = match response {
+    let mut response = match response {
         Ok(response) => response,
-        Err(ureq::Error::Status(code, response)) => {
-            let body = response.into_string().unwrap_or_default();
-            return Err(anyhow!(
-                "OpenRouter response code {code}: {}",
-                truncate(&body, 400)
-            ));
-        }
         Err(error) => return Err(anyhow!("OpenRouter call failed: {error}")),
     };
+    if !response.status().is_success() {
+        let code = response.status().as_u16();
+        let body = response.body_mut().read_to_string().unwrap_or_default();
+        return Err(anyhow!(
+            "OpenRouter response code {code}: {}",
+            truncate(&body, 400)
+        ));
+    }
     let value: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .context("failed to parse OpenRouter response JSON")?;
     value
         .get("choices")
